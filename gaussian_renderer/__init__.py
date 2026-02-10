@@ -9,11 +9,14 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+USE_FASTERGS_RASTERIZER = True
+
 import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
+from FasterGSCudaBackend.torch_bindings import diff_rasterize, RasterizerSettings
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False):
     """
@@ -21,6 +24,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     
     Background tensor (bg_color) must be on GPU!
     """
+
+    if USE_FASTERGS_RASTERIZER:
+        return faster_render(viewpoint_camera, pc, pipe, bg_color, scaling_modifier, separate_sh, override_color, use_trained_exp)
  
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
@@ -124,5 +130,74 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         "radii": radii,
         "depth" : depth_image
         }
+    
+    return out
+
+
+def faster_render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0, separate_sh=False, override_color=None, use_trained_exp=False):
+    """
+    Render the scene.
+
+    Background tensor (bg_color) must be on GPU!
+    """
+    assert override_color is None, "FasterGSCudaBackend does not support the override_color argument."
+    assert pipe.compute_cov3D_python == False, "FasterGSCudaBackend does not support the compute_cov3D_python argument."
+    assert pipe.convert_SHs_python == False, "FasterGSCudaBackend does not support the convert_SHs_python argument."
+    assert pipe.debug == False, "FasterGSCudaBackend does not support the debug argument."
+
+    # Set up rasterization configuration.
+    raster_settings = RasterizerSettings(
+        w2c=viewpoint_camera.world_view_transform.T.contiguous(),  # FasterGSCudaBackend uses row-major matrices
+        cam_position=viewpoint_camera.camera_center.contiguous(),
+        bg_color=bg_color.contiguous(),
+        active_sh_bases=(pc.active_sh_degree + 1) ** 2,
+        width=int(viewpoint_camera.image_width),
+        height=int(viewpoint_camera.image_height),
+        focal_x=1 / math.tan(viewpoint_camera.FoVx / 2) * (viewpoint_camera.image_width / 2),
+        focal_y=1 / math.tan(viewpoint_camera.FoVy / 2) * (viewpoint_camera.image_height / 2),
+        center_x=viewpoint_camera.image_width / 2,
+        center_y=viewpoint_camera.image_height / 2,
+        near_plane=0.2,
+        far_plane=10000.0,
+        proper_antialiasing=pipe.antialiasing,
+    )
+
+    # In 1st dim rasterizer adds 1 when Gaussians are visible, in 2nd dim rasterizer adds gradients of 2d means when backward is called.
+    densification_info = torch.zeros((2, pc._xyz.shape[0]), dtype=torch.float32, device='cuda')
+
+    # Gather Gaussian parameters for rasterization.
+    means = pc._xyz
+    scales = pc._scaling if scaling_modifier == 1.0 else pc._scaling + math.log(max(scaling_modifier, 1e-6))
+    rotations = pc._rotation
+    opacities = pc._opacity
+    sh_coefficients_0 = pc._features_dc
+    sh_coefficients_rest = pc._features_rest
+
+    # Rasterize visible Gaussians to image.
+    rendered_image = diff_rasterize(
+        means=means,
+        scales=scales,
+        rotations=rotations,
+        opacities=opacities,
+        sh_coefficients_0=sh_coefficients_0,
+        sh_coefficients_rest=sh_coefficients_rest,
+        densification_info=densification_info,
+        rasterizer_settings=raster_settings,
+    )
+        
+    # Apply exposure to rendered image (training only)
+    if use_trained_exp:
+        exposure = pc.get_exposure_from_name(viewpoint_camera.image_name)
+        rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
+
+    # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
+    # They will be excluded from value updates used in the splitting criteria.
+    rendered_image = rendered_image.clamp(0, 1)
+    out = {
+        "render": rendered_image,
+        "densification_info": densification_info,
+        # "viewspace_points_grad": densification_info[1],
+        # "visibility_filter" : densification_info[0].nonzero(),
+    }
     
     return out

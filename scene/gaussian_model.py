@@ -9,6 +9,8 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+USE_FASTERGS_ADAM = True
+
 import torch
 import numpy as np
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
@@ -21,6 +23,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+from FasterGSCudaBackend.torch_bindings import FusedAdam
 
 try:
     from diff_gaussian_rasterization import SparseGaussianAdam
@@ -190,7 +193,7 @@ class GaussianModel:
         ]
 
         if self.optimizer_type == "default":
-            self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+            self.optimizer = FusedAdam(l, lr=0.0, eps=1e-15) if USE_FASTERGS_ADAM else torch.optim.Adam(l, lr=0.0, eps=1e-15)
         elif self.optimizer_type == "sparse_adam":
             try:
                 self.optimizer = SparseGaussianAdam(l, lr=0.0, eps=1e-15)
@@ -470,4 +473,10 @@ class GaussianModel:
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
+        self.denom[update_filter] += 1
+
+    def add_densification_stats_fastergs(self, densification_info):
+        update_filter = densification_info[0] > 0
+        xyz_gradient = densification_info[1]
+        self.xyz_gradient_accum[update_filter] += xyz_gradient[update_filter, None]
         self.denom[update_filter] += 1
