@@ -41,10 +41,10 @@ If you use the FasterGSCudaBackend extension in your own work, please cite:
   title         = {Faster-GS: Analyzing and Improving Gaussian Splatting Optimization},
   author        = {Florian Hahlbohm and Linus Franke and Martin Eisemann and Marcus Magnor},
   year          = {2026},
-  eprint        = {2602.xxxxx},
+  eprint        = {2602.09999},
   archivePrefix = {arXiv},
   primaryClass  = {cs.CV},
-  url           = {https://arxiv.org/abs/2602.xxxxx},
+  url           = {https://arxiv.org/abs/2602.09999},
 }
 ```
 
