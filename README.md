@@ -1,3 +1,55 @@
+# Faster-GS Integration
+
+This fork shows how the fast 3DGS rasterizer and Adam optimizer implementations from [Faster-GS: Analyzing and Improving Gaussian Splatting Optimization](https://fhahlbohm.github.io/faster-gaussian-splatting/) can be integrated into this codebase for significantly accelerated training. In our tests, these modifications result in a speedup of 3-5× depending on scene size (1.5–2× compared to the `3DGS-accel` branch).
+
+Check out [our full framework](https://github.com/nerficg-project/faster-gaussian-splatting) for even bigger speedups, a refactored and cleaned implementation, and many additional features such as fast MCMC densification and 4D reconstruction.
+
+## Additional Setup
+
+Simply install the `FasterGSCudaBackend` using
+```shell
+pip install git+https://github.com/nerficg-project/faster-gaussian-splatting/#subdirectory=FasterGSCudaBackend --no-build-isolation
+```
+The module is fully compatible with the standard Conda environment specified by `environment.yml`.  
+For convenience, we also provide `environment_cuda12.yml` to allow setting up a more up-to-date environment based on CUDA SDK 12.
+
+## Changes
+
+Integrating the Faster-GS rasterizer and fused Adam optimizer requires minimal modifications to three files:
+- `‎gaussian_renderer/__init__.py`: The improved rasterizer requires slightly different inputs that are easily obtained from the available data.
+  For improved readability, we added a separate `faster_render` function that is called by the original `render` function if the constant `USE_FASTERGS_RASTERIZER` at the top of the file is set to `True`.
+- `‎scene/gaussian_model.py`: We slightly modified the optimizer setup so that the fused Adam optimizer can be toggled through the `USE_FASTERGS_ADAM` constant at the the top of the file.
+  We also added a new helper function `add_densification_stats_fastergs`.
+- `train.py`: The Faster-GS rasterizer uses a modified input/output interface. Therefore, we modified the control flow to maintain compatibility and gracefully handle unsupported features.
+
+## Limitations
+
+The Faster-GS rasterizer does not support the following features:
+- Depth rendering and regularization
+- Modified activation functions for scale, rotation, and opacity
+- `cov3D_precomp` and `colors_precomp` inputs
+- Screen-space radius output
+
+When these features are required, the `FasterGSCudaBackend` can still accelerate training compared to the original code through the fused Adam optimizer implementation.
+Simply set `USE_FASTERGS_RASTERIZER=False` in `‎gaussian_renderer/__init__.py` to use the original rasterizer implementation.
+
+## Citation
+
+If you use the FasterGSCudaBackend extension in your own work, please cite:
+```bibtex
+@misc{hahlbohm2026fastergs,
+  title         = {Faster-GS: Analyzing and Improving Gaussian Splatting Optimization},
+  author        = {Florian Hahlbohm and Linus Franke and Martin Eisemann and Marcus Magnor},
+  year          = {2026},
+  eprint        = {2602.xxxxx},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CV},
+  url           = {https://arxiv.org/abs/2602.xxxxx},
+}
+```
+
+
+
 # 3D Gaussian Splatting for Real-Time Radiance Field Rendering
 Bernhard Kerbl*, Georgios Kopanas*, Thomas Leimkühler, George Drettakis (* indicates equal contribution)<br>
 | [Webpage](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/) | [Full Paper](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/3d_gaussian_splatting_high.pdf) | [Video](https://youtu.be/T_kXY43VZnk) | [Other GRAPHDECO Publications](http://www-sop.inria.fr/reves/publis/gdindex.php) | [FUNGRAPH project page](https://fungraph.inria.fr) |<br>
