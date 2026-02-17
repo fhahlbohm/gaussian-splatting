@@ -22,6 +22,8 @@ Integrating the Faster-GS rasterizer and fused Adam optimizer requires minimal m
   We also added a new helper function `add_densification_stats_fastergs`.
 - `train.py`: The Faster-GS rasterizer uses a modified input/output interface. Therefore, we modified the control flow to maintain compatibility and gracefully handle unsupported features.
 
+For a detailed breakdown, see [PATCH_BREAKDOWN.md](PATCH_BREAKDOWN.md).
+
 ## Limitations
 
 The Faster-GS rasterizer does not support the following features:
